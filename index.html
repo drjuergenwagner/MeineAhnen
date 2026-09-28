@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Ahnenverwaltung</title>
+  <!-- sql.js für SQLite im Browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; }
+    .card { background: white; padding: 1rem; margin-bottom: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .media-list img { max-width: 150px; margin-right: 10px; border-radius: 4px; }
+    .badge { background: #e0e0e0; padding: 2px 8px; border-radius: 12px; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+
+  <h1>Ahnenübersicht</h1>
+  <div id="loading">Datenbank wird geladen...</div>
+  <div id="personen-container"></div>
+
+  <script>
+    async function init() {
+      // 1. WASM initialisieren
+      const SQL = await initSqlJs({
+        locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+      });
+
+      // 2. SQLite-Datei herunterladen
+      const response = await fetch('ahnen.db');
+      const buf = await response.arrayBuffer();
+      const db = new SQL.Database(new Uint8Array(buf));
+
+      document.getElementById('loading').style.display = 'none';
+
+      // 3. Personen abfragen
+      const res = db.exec(`
+        SELECT p.id, p.vorname, p.nachname, p.geburtsdatum, p.geburtsort, p.todesdatum, p.todesort
+        FROM personen p
+        ORDER BY p.nachname, p.vorname
+      `);
+
+      if (!res.length) {
+        document.getElementById('personen-container').innerHTML = '<p>Keine Personen gefunden.</p>';
+        return;
+      }
+
+      const columns = res[0].columns;
+      const rows = res[0].values;
+      const container = document.getElementById('personen-container');
+
+      rows.forEach(row => {
+        const p = {};
+        columns.forEach((col, idx) => p[col] = row[idx]);
+
+        // Medien zu dieser Person abfragen
+        const medienRes = db.exec(`
+          SELECT m.titel, m.dateipfad, m.typ 
+          FROM medien m
+          JOIN person_medien pm ON m.id = pm.medien_id
+          WHERE pm.person_id = ${p.id}
+        `);
+
+        // Quellen zu dieser Person abfragen
+        const quellenRes = db.exec(`
+          SELECT q.titel, q.archiv, pq.zitat_details 
+          FROM quellen q
+          JOIN person_quellen pq ON q.id = pq.quellen_id
+          WHERE pq.person_id = ${p.id}
+        `);
+
+        // HTML aufbauen
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <h2>${p.vorname} ${p.nachname}</h2>
+          <p>
+            📅 <strong>Geboren:</strong> ${p.geburtsdatum || '?'} in ${p.geburtsort || 'unbekannt'}<br>
+            ✝ <strong>Gestorben:</strong> ${p.todesdatum || '-'} in ${p.todesort || '-'}
+          </p>
+          ${renderMedien(medienRes)}
+          ${renderQuellen(quellenRes)}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function renderMedien(res) {
+      if (!res.length) return '';
+      const rows = res[0].values;
+      let html = '<h4>Dokumente & Fotos:</h4><div class="media-list">';
+      rows.forEach(([titel, pfad, typ]) => {
+        if (typ === 'foto') {
+          html += `<img src="${pfad}" alt="${titel}" title="${titel}">`;
+        } else {
+          html += `<a href="${pfad}" target="_blank" class="badge">📄 ${titel}</a> `;
+        }
+      });
+      return html + '</div>';
+    }
+
+    function renderQuellen(res) {
+      if (!res.length) return '';
+      const rows = res[0].values;
+      let html = '<h4>Quellen:</h4><ul>';
+      rows.forEach(([titel, archiv, zitat]) => {
+        html += `<li><strong>${titel}</strong> ${archiv ? `(${archiv})` : ''} - <em>${zitat || ''}</em></li>`;
+      });
+      return html + '</ul>';
+    }
+
+    init();
+  </script>
+</body>
+</html>
